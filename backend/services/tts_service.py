@@ -2,10 +2,18 @@ import os
 import uuid
 import tempfile
 import asyncio
+import subprocess
 from typing import List, Dict, Any
 from google.cloud import texttospeech
 import edge_tts
-from pydub import AudioSegment
+
+# Try to import pydub, but make it optional
+try:
+    from pydub import AudioSegment
+    PYDUB_AVAILABLE = True
+except (ImportError, ModuleNotFoundError):
+    print("⚠ pydub not available - audio merging will be limited")
+    PYDUB_AVAILABLE = False
 
 class TTSService:
     def __init__(self):
@@ -56,14 +64,35 @@ class TTSService:
                 os.rename(temp_files[0], output_file_path)
                 temp_files = [] # clear so we don't try to delete it
             else:
-                # Merge multiple audio files using pydub
-                combined = AudioSegment.empty()
-                for path in temp_files:
-                    segment = AudioSegment.from_mp3(path)
-                    combined += segment
-                
-                # Export the merged segment
-                combined.export(output_file_path, format="mp3")
+                # Merge multiple audio files
+                if PYDUB_AVAILABLE:
+                    # Use pydub to merge
+                    combined = AudioSegment.empty()
+                    for path in temp_files:
+                        segment = AudioSegment.from_mp3(path)
+                        combined += segment
+                    combined.export(output_file_path, format="mp3")
+                else:
+                    # Use ffmpeg to concatenate files
+                    concat_list = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+                    try:
+                        # Create ffmpeg concat file
+                        for path in temp_files:
+                            concat_list.write(f"file '{path}'\n")
+                        concat_list.close()
+                        
+                        # Run ffmpeg to concatenate
+                        cmd = [
+                            'ffmpeg', '-f', 'concat', '-safe', '0',
+                            '-i', concat_list.name,
+                            '-c', 'copy', output_file_path, '-y'
+                        ]
+                        result = subprocess.run(cmd, capture_output=True, text=True)
+                        if result.returncode != 0:
+                            print(f"FFmpeg error: {result.stderr}")
+                            raise Exception(f"FFmpeg concat failed: {result.stderr}")
+                    finally:
+                        os.remove(concat_list.name)
                 
             return True
             
