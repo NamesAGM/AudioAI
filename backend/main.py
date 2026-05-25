@@ -41,13 +41,31 @@ os.makedirs(AUDIO_DIR, exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Initialize Services
-tts_service = TTSService()
-pdf_service = PDFService()
+try:
+    tts_service = TTSService()
+    print("✓ TTS Service initialized")
+except Exception as e:
+    print(f"⚠ TTS Service initialization error: {e}")
+    tts_service = None
+
+try:
+    pdf_service = PDFService()
+    print("✓ PDF Service initialized")
+except Exception as e:
+    print(f"⚠ PDF Service initialization error: {e}")
+    pdf_service = None
 
 # Initialize Supabase client if keys are available
 supabase_url = os.getenv("SUPABASE_URL")
 supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
 supabase: Optional[Client] = None
+
+if supabase_url and supabase_key:
+    try:
+        supabase = create_client(supabase_url, supabase_key)
+        print("✓ Supabase client initialized")
+    except Exception as e:
+        print(f"⚠ Supabase initialization error: {e}")
 
 # Local Sandbox Database setup (if Supabase is not configured)
 DB_PATH = os.path.join(os.path.dirname(__file__), "sandbox.db")
@@ -141,6 +159,13 @@ async def process_conversion_task(job_id: str, local_pdf_path: str, filename: st
     
     local_audio_path = os.path.join(AUDIO_DIR, f"{job_id}.mp3")
     
+    # Check if required services are available
+    if not pdf_service or not tts_service:
+        error_msg = "Required services not available. Check logs for initialization errors."
+        print(f"Error in job {job_id}: {error_msg}")
+        update_job_status(job_id, "failed", error_message=error_msg)
+        return
+    
     try:
         # Step 1: Extract and clean text from PDF
         raw_text = pdf_service.extract_text(local_pdf_path)
@@ -198,12 +223,14 @@ async def process_conversion_task(job_id: str, local_pdf_path: str, filename: st
 def healthcheck():
     return {
         "status": "healthy",
-        "google_tts_available": tts_service.google_available,
+        "google_tts_available": tts_service.google_available if tts_service else False,
         "supabase_connected": supabase is not None
     }
 
 @app.get("/api/voices")
 def get_voices():
+    if not tts_service:
+        return {"voices": [{"name": "edge-tts", "language": "en-US"}], "error": "Google TTS unavailable"}
     return tts_service.get_available_voices()
 
 @app.post("/api/convert")
