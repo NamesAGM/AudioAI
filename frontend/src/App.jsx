@@ -3,6 +3,15 @@ import { createClient } from '@supabase/supabase-js';
 import Dashboard from './components/Dashboard';
 import { AudioLines, LogIn, UserPlus, ShieldAlert, Sparkles, User, KeyRound, Mail } from 'lucide-react';
 
+// Utility to generate UUID v4
+function generateUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
 // Attempt to initialize Supabase
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -19,6 +28,17 @@ if (supabaseUrl && supabaseAnonKey && supabaseUrl !== 'your-supabase-url') {
   }
 }
 
+// Generate a stable sandbox user ID (stored in localStorage to persist across sessions)
+const SANDBOX_USER_ID_KEY = 'audioai_sandbox_user_id';
+function getSandboxUserId() {
+  let userId = localStorage.getItem(SANDBOX_USER_ID_KEY);
+  if (!userId) {
+    userId = generateUUID();
+    localStorage.setItem(SANDBOX_USER_ID_KEY, userId);
+  }
+  return userId;
+}
+
 export default function App() {
   const [session, setSession] = useState(null);
   const [authMode, setAuthMode] = useState('login'); // 'login' | 'signup'
@@ -31,10 +51,10 @@ export default function App() {
 
   useEffect(() => {
     if (isSandboxMode) {
-      // Auto-login sandbox session
+      // Auto-login sandbox session with proper UUID
       setSession({
         user: {
-          id: 'sandbox-user-id-12345',
+          id: getSandboxUserId(),
           email: 'sandbox@audioai.dev',
           user_metadata: { full_name: 'Sandbox Developer' }
         }
