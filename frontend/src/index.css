@@ -1,0 +1,75 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-heading: 'Outfit', 'Inter', system-ui, sans-serif;
+}
+
+:root {
+  font-family: var(--font-sans);
+}
+
+body {
+  margin: 0;
+  background-color: #070a13;
+  background-image: 
+    radial-gradient(at 0% 0%, hsla(220, 60%, 15%, 0.7) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, hsla(260, 60%, 15%, 0.5) 0px, transparent 50%),
+    radial-gradient(at 50% 100%, hsla(240, 50%, 10%, 0.8) 0px, transparent 50%);
+  background-attachment: fixed;
+  color: #f3f4f6;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Outfit', 'Inter', system-ui, sans-serif;
+}
+
+/* Glassmorphism scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.02);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Custom Glassmorphism styling utilities since Tailwind v4 allows custom utility styling */
+.glass-panel {
+  background: rgba(17, 25, 40, 0.65);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+.glass-panel-glow {
+  background: rgba(17, 25, 40, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(139, 92, 246, 0.2); /* violet boundary */
+  box-shadow: 0 8px 32px 0 rgba(139, 92, 246, 0.15);
+}
+
+.glass-input {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #f3f4f6;
+  transition: all 0.2s ease-in-out;
+}
+
+.glass-input:focus {
+  outline: none;
+  border-color: rgba(139, 92, 246, 0.5);
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.2);
+  background: rgba(15, 23, 42, 0.8);
+}
