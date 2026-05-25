@@ -33,3 +33,6 @@ test_output.mp3
 
 # Logs
 *.log
+
+.vercel
+.env*
