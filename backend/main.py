@@ -74,36 +74,45 @@ if supabase_url and supabase_key:
 
 # Local Sandbox Database setup (if Supabase is not configured)
 DB_PATH = os.path.join(os.path.dirname(__file__), "sandbox.db")
-def init_sandbox_db():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS conversion_jobs (
-            id TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL,
-            filename TEXT NOT NULL,
-            status TEXT NOT NULL,
-            pdf_url TEXT NOT NULL,
-            audio_url TEXT,
-            settings TEXT,
-            error_message TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    conn.commit()
-    conn.close()
 
+def init_sandbox_db():
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS conversion_jobs (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                status TEXT NOT NULL,
+                pdf_url TEXT NOT NULL,
+                audio_url TEXT,
+                settings TEXT,
+                error_message TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        conn.close()
+        print("✓ Sandbox database initialized")
+    except Exception as e:
+        print(f"⚠ Sandbox database initialization error: {e}")
+
+# Always initialize sandbox DB as fallback
+init_sandbox_db()
+
+# Try to initialize Supabase
 if supabase_url and supabase_key:
     try:
         supabase = create_client(supabase_url, supabase_key)
-        print("Connected to Supabase client successfully.")
+        print("✓ Supabase client connected")
     except Exception as e:
-        print(f"Failed to connect to Supabase: {e}. Fallback to Local Sandbox database.")
+        print(f"⚠ Supabase connection failed: {e}. Using sandbox database.")
         supabase = None
 else:
-    print("Supabase credentials missing. Running in Local Sandbox mode.")
-    init_sandbox_db()
+    print("ℹ Supabase credentials not set. Using sandbox database.")
+    supabase = None
 
 # DB Helpers that abstract database calls (Supabase vs SQLite)
 def update_job_status(job_id: str, status: str, audio_url: Optional[str] = None, error_message: Optional[str] = None):
@@ -289,50 +298,61 @@ async def convert_pdf(
 
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str):
-    if supabase:
-        try:
+    try:
+        if supabase:
             res = supabase.table("conversion_jobs").select("*").eq("id", job_id).execute()
             if not res.data:
                 raise HTTPException(status_code=404, detail="Job not found")
             return res.data[0]
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-    else:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM conversion_jobs WHERE id = ?", (job_id,))
-        row = cursor.fetchone()
-        conn.close()
-        
-        if not row:
-            raise HTTPException(status_code=404, detail="Job not found")
+        else:
+            conn = sqlite3.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM conversion_jobs WHERE id = ?", (job_id,))
+            row = cursor.fetchone()
+            conn.close()
             
-        job = dict(row)
-        if job["settings"]:
-            job["settings"] = json.loads(job["settings"])
-        return job
+            if not row:
+                raise HTTPException(status_code=404, detail="Job not found")
+                
+            job = dict(row)
+            if job.get("settings"):
+                try:
+                    job["settings"] = json.loads(job["settings"])
+                except:
+                    pass
+            return job
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error fetching job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/users/{user_id}/jobs")
 def get_user_jobs(user_id: str):
-    if supabase:
-        try:
+    try:
+        if supabase:
             res = supabase.table("conversion_jobs").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
             return res.data
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-    else:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM conversion_jobs WHERE user_id = ? ORDER BY created_at DESC", (user_id,))
-        rows = cursor.fetchall()
-        conn.close()
-        
-        jobs = []
-        for row in rows:
-            job = dict(row)
-            if job["settings"]:
-                job["settings"] = json.loads(job["settings"])
-            jobs.append(job)
-        return jobs
+        else:
+            conn = sqlite3.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM conversion_jobs WHERE user_id = ? ORDER BY created_at DESC", (user_id,))
+            rows = cursor.fetchall()
+            conn.close()
+            
+            jobs = []
+            for row in rows:
+                job = dict(row)
+                if job.get("settings"):
+                    try:
+                        job["settings"] = json.loads(job["settings"])
+                    except:
+                        pass
+                jobs.append(job)
+            return jobs
+    except Exception as e:
+        print(f"Error fetching jobs for user {user_id}: {e}")
+        # Return empty list instead of error to prevent 500
+        return []
