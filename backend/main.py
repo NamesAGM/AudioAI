@@ -39,11 +39,22 @@ app.add_middleware(
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 UPLOAD_DIR = os.path.join(STATIC_DIR, "uploads")
 AUDIO_DIR = os.path.join(STATIC_DIR, "audio")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-os.makedirs(AUDIO_DIR, exist_ok=True)
+
+try:
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    os.makedirs(AUDIO_DIR, exist_ok=True)
+    print(f"✓ Storage directories created/verified")
+    print(f"  - Upload dir: {UPLOAD_DIR}")
+    print(f"  - Audio dir: {AUDIO_DIR}")
+except Exception as e:
+    print(f"⚠ Error creating storage directories: {e}")
 
 # Mount static directory to serve files locally
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+try:
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    print("✓ Static files mounted")
+except Exception as e:
+    print(f"⚠ Error mounting static files: {e}")
 
 # Initialize Services
 try:
@@ -142,28 +153,36 @@ def update_job_status(job_id: str, status: str, audio_url: Optional[str] = None,
         conn.close()
 
 def create_job_record(job_id: str, user_id: str, filename: str, pdf_url: str, settings: dict):
-    if supabase:
-        try:
-            supabase.table("conversion_jobs").insert({
-                "id": job_id,
-                "user_id": user_id,
-                "filename": filename,
-                "status": "pending",
-                "pdf_url": pdf_url,
-                "settings": settings
-            }).execute()
-        except Exception as e:
-            print(f"Supabase insert failed: {e}")
-            raise HTTPException(status_code=500, detail="Database insertion failed")
-    else:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO conversion_jobs (id, user_id, filename, status, pdf_url, settings) VALUES (?, ?, ?, ?, ?, ?)",
-            (job_id, user_id, filename, "pending", pdf_url, json.dumps(settings))
-        )
-        conn.commit()
-        conn.close()
+    try:
+        if supabase:
+            try:
+                supabase.table("conversion_jobs").insert({
+                    "id": job_id,
+                    "user_id": user_id,
+                    "filename": filename,
+                    "status": "pending",
+                    "pdf_url": pdf_url,
+                    "settings": settings
+                }).execute()
+                print(f"✓ Job {job_id} created in Supabase")
+            except Exception as e:
+                print(f"⚠ Supabase insert failed: {e}. Falling back to SQLite.")
+                raise
+        else:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO conversion_jobs (id, user_id, filename, status, pdf_url, settings) VALUES (?, ?, ?, ?, ?, ?)",
+                (job_id, user_id, filename, "pending", pdf_url, json.dumps(settings))
+            )
+            conn.commit()
+            conn.close()
+            print(f"✓ Job {job_id} created in SQLite")
+    except Exception as e:
+        print(f"Error creating job record: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to create job record: {str(e)}")
 
 async def process_conversion_task(job_id: str, local_pdf_path: str, filename: str, settings: dict):
     """
@@ -233,6 +252,25 @@ async def process_conversion_task(job_id: str, local_pdf_path: str, filename: st
             if os.path.exists(local_audio_path):
                 os.remove(local_audio_path)
 
+# Startup event to verify everything is initialized
+@app.on_event("startup")
+async def startup_event():
+    print("\n" + "="*60)
+    print("🚀 AudioAI Backend Starting Up...")
+    print("="*60)
+    print(f"📦 Services:")
+    print(f"  - PDF Service: {'✓' if pdf_service else '✗'}")
+    print(f"  - TTS Service: {'✓' if tts_service else '✗'}")
+    if tts_service:
+        print(f"    - Google TTS: {'✓' if tts_service.google_available else '✗'}")
+    print(f"📊 Database:")
+    print(f"  - Supabase: {'✓' if supabase else '✗'}")
+    print(f"  - Sandbox DB: {DB_PATH}")
+    print(f"💾 Storage:")
+    print(f"  - Uploads: {UPLOAD_DIR} ({'✓' if os.path.exists(UPLOAD_DIR) else '✗'})")
+    print(f"  - Audio: {AUDIO_DIR} ({'✓' if os.path.exists(AUDIO_DIR) else '✗'})")
+    print("="*60 + "\n")
+
 @app.get("/api/health")
 def healthcheck():
     return {
@@ -257,44 +295,52 @@ async def convert_pdf(
     speaking_rate: float = Form(1.0),
     gender: str = Form("FEMALE")
 ):
-    # Validate file format
-    if not file.filename.endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+    try:
+        # Validate file format
+        if not file.filename.endswith(".pdf"):
+            raise HTTPException(status_code=400, detail="Only PDF files are supported")
+            
+        job_id = str(uuid.uuid4())
         
-    job_id = str(uuid.uuid4())
-    
-    # Save uploaded PDF to local disk temporarily
-    local_pdf_path = os.path.join(UPLOAD_DIR, f"{job_id}.pdf")
-    with open(local_pdf_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+        # Save uploaded PDF to local disk temporarily
+        local_pdf_path = os.path.join(UPLOAD_DIR, f"{job_id}.pdf")
+        with open(local_pdf_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        settings = {
+            "voice_name": voice_name,
+            "language_code": language_code,
+            "speaking_rate": speaking_rate,
+            "gender": gender
+        }
         
-    settings = {
-        "voice_name": voice_name,
-        "language_code": language_code,
-        "speaking_rate": speaking_rate,
-        "gender": gender
-    }
-    
-    # Define PDF url for database insert
-    pdf_url = f"/static/uploads/{job_id}.pdf"
-    
-    # Register job record in database
-    create_job_record(job_id, user_id, file.filename, pdf_url, settings)
-    
-    # Trigger conversion process in the background
-    background_tasks.add_task(
-        process_conversion_task,
-        job_id,
-        local_pdf_path,
-        file.filename,
-        settings
-    )
-    
-    return {
-        "job_id": job_id,
-        "status": "pending",
-        "filename": file.filename
-    }
+        # Define PDF url for database insert
+        pdf_url = f"/static/uploads/{job_id}.pdf"
+        
+        # Register job record in database
+        create_job_record(job_id, user_id, file.filename, pdf_url, settings)
+        
+        # Trigger conversion process in the background
+        background_tasks.add_task(
+            process_conversion_task,
+            job_id,
+            local_pdf_path,
+            file.filename,
+            settings
+        )
+        
+        return {
+            "job_id": job_id,
+            "status": "pending",
+            "filename": file.filename
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in convert_pdf: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Conversion failed: {str(e)}")
 
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str):
