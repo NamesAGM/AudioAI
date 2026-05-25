@@ -4,6 +4,9 @@ import {
   RefreshCw, CheckCircle2, AlertCircle, Clock, VolumeX, SkipBack, SkipForward
 } from 'lucide-react';
 
+// Get backend API URL from environment variable
+const API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+
 export default function Dashboard({ session, supabase, isSandboxMode, onSignOut }) {
   const [file, setFile] = useState(null);
   const [dragActive, setDragActive] = useState(false);
@@ -85,7 +88,7 @@ export default function Dashboard({ session, supabase, isSandboxMode, onSignOut 
 
   const fetchVoices = async () => {
     try {
-      const res = await fetch('/api/voices');
+      const res = await fetch(`${API_URL}/api/voices`);
       if (res.ok) {
         const data = await res.json();
         setVoices(data);
@@ -107,7 +110,7 @@ export default function Dashboard({ session, supabase, isSandboxMode, onSignOut 
 
   const fetchUserJobs = async () => {
     try {
-      const res = await fetch(`/api/users/${userId}/jobs`);
+      const res = await fetch(`${API_URL}/api/users/${userId}/jobs`);
       if (res.ok) {
         const data = await res.json();
         setJobs(data);
@@ -184,7 +187,7 @@ export default function Dashboard({ session, supabase, isSandboxMode, onSignOut 
     formData.append('gender', voiceObj.gender || 'FEMALE');
 
     try {
-      const res = await fetch('/api/convert', {
+      const res = await fetch(`${API_URL}/api/convert`, {
         method: 'POST',
         body: formData,
       });
