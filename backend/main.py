@@ -152,32 +152,66 @@ def update_job_status(job_id: str, status: str, audio_url: Optional[str] = None,
         conn.commit()
         conn.close()
 
+
+def is_supabase_user_valid(user_id: str) -> bool:
+    if not supabase:
+        return False
+
+    try:
+        response = supabase.table("profiles").select("id").eq("id", user_id).limit(1).execute()
+        if hasattr(response, "error") and response.error:
+            print(f"⚠ Supabase profile query failed for user {user_id}: {response.error}")
+            return False
+
+        data = getattr(response, "data", None)
+        if data is None:
+            print(f"⚠ Unexpected Supabase profile response format for user {user_id}: {response}")
+            return False
+
+        return bool(data)
+    except Exception as e:
+        print(f"⚠ Supabase profile validation failed for user {user_id}: {e}")
+        return False
+
+
 def create_job_record(job_id: str, user_id: str, filename: str, pdf_url: str, settings: dict):
     try:
         if supabase:
             try:
-                supabase.table("conversion_jobs").insert({
-                    "id": job_id,
-                    "user_id": user_id,
-                    "filename": filename,
-                    "status": "pending",
-                    "pdf_url": pdf_url,
-                    "settings": settings
-                }).execute()
-                print(f"✓ Job {job_id} created in Supabase")
+                if is_supabase_user_valid(user_id):
+                    response = supabase.table("conversion_jobs").insert({
+                        "id": job_id,
+                        "user_id": user_id,
+                        "filename": filename,
+                        "status": "pending",
+                        "pdf_url": pdf_url,
+                        "settings": settings
+                    }).execute()
+
+                    if hasattr(response, "error") and response.error:
+                        raise Exception(response.error)
+
+                    print(f"✓ Job {job_id} created in Supabase")
+                    return
+                else:
+                    print(f"⚠ Supabase user {user_id} not found in profiles. Using SQLite fallback.")
             except Exception as e:
-                print(f"⚠ Supabase insert failed: {e}. Falling back to SQLite.")
-                raise
-        else:
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            cursor.execute(
-                "INSERT INTO conversion_jobs (id, user_id, filename, status, pdf_url, settings) VALUES (?, ?, ?, ?, ?, ?)",
-                (job_id, user_id, filename, "pending", pdf_url, json.dumps(settings))
-            )
-            conn.commit()
-            conn.close()
-            print(f"✓ Job {job_id} created in SQLite")
+                print(f"⚠ Supabase job insert failed for user {user_id}: {e}. Falling back to SQLite.")
+
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO conversion_jobs (id, user_id, filename, status, pdf_url, settings) VALUES (?, ?, ?, ?, ?, ?)",
+            (job_id, user_id, filename, "pending", pdf_url, json.dumps(settings))
+        )
+        conn.commit()
+        conn.close()
+        print(f"✓ Job {job_id} created in SQLite")
+    except Exception as e:
+        print(f"Error creating job record: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to create job record: {str(e)}")
     except Exception as e:
         print(f"Error creating job record: {e}")
         import traceback
