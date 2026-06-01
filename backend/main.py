@@ -24,12 +24,8 @@ app = FastAPI(title="AudioAI API", description="PDF to Audio conversion backend 
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://audio-ai-peach.vercel.app",
-        "http://localhost:3000",
-        "http://localhost:5173",  # Vite dev server
-        "http://localhost:8000",
-    ],
+    # Allow all origins via regex during troubleshooting; replace with specific origins for production
+    allow_origin_regex=r".*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -43,32 +39,32 @@ AUDIO_DIR = os.path.join(STATIC_DIR, "audio")
 try:
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     os.makedirs(AUDIO_DIR, exist_ok=True)
-    print(f"✓ Storage directories created/verified")
+    print(f"[OK] Storage directories created/verified")
     print(f"  - Upload dir: {UPLOAD_DIR}")
     print(f"  - Audio dir: {AUDIO_DIR}")
 except Exception as e:
-    print(f"⚠ Error creating storage directories: {e}")
+    print(f"[ERROR] Error creating storage directories: {e}")
 
 # Mount static directory to serve files locally
 try:
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-    print("✓ Static files mounted")
+    print("[OK] Static files mounted")
 except Exception as e:
-    print(f"⚠ Error mounting static files: {e}")
+    print(f"[ERROR] Error mounting static files: {e}")
 
 # Initialize Services
 try:
     tts_service = TTSService()
-    print("✓ TTS Service initialized")
+    print("[OK] TTS Service initialized")
 except Exception as e:
-    print(f"⚠ TTS Service initialization error: {e}")
+    print(f"[ERROR] TTS Service initialization error: {e}")
     tts_service = None
 
 try:
     pdf_service = PDFService()
-    print("✓ PDF Service initialized")
+    print("[OK] PDF Service initialized")
 except Exception as e:
-    print(f"⚠ PDF Service initialization error: {e}")
+    print(f"[ERROR] PDF Service initialization error: {e}")
     pdf_service = None
 
 # Initialize Supabase client if keys are available
@@ -79,9 +75,9 @@ supabase: Optional[Client] = None
 if supabase_url and supabase_key:
     try:
         supabase = create_client(supabase_url, supabase_key)
-        print("✓ Supabase client initialized")
+        print("[OK] Supabase client initialized")
     except Exception as e:
-        print(f"⚠ Supabase initialization error: {e}")
+        print(f"[ERROR] Supabase initialization error: {e}")
 
 # Local Sandbox Database setup (if Supabase is not configured)
 DB_PATH = os.path.join(os.path.dirname(__file__), "sandbox.db")
@@ -106,9 +102,9 @@ def init_sandbox_db():
         """)
         conn.commit()
         conn.close()
-        print("✓ Sandbox database initialized")
+        print("[OK] Sandbox database initialized")
     except Exception as e:
-        print(f"⚠ Sandbox database initialization error: {e}")
+        print(f"[ERROR] Sandbox database initialization error: {e}")
 
 # Always initialize sandbox DB as fallback
 init_sandbox_db()
@@ -117,40 +113,49 @@ init_sandbox_db()
 if supabase_url and supabase_key:
     try:
         supabase = create_client(supabase_url, supabase_key)
-        print("✓ Supabase client connected")
+        print("[OK] Supabase client connected")
     except Exception as e:
-        print(f"⚠ Supabase connection failed: {e}. Using sandbox database.")
+        print(f"[ERROR] Supabase connection failed: {e}. Using sandbox database.")
         supabase = None
 else:
-    print("ℹ Supabase credentials not set. Using sandbox database.")
+    print("[INFO] Supabase credentials not set. Using sandbox database.")
     supabase = None
 
 # DB Helpers that abstract database calls (Supabase vs SQLite)
+def _update_job_status_sqlite(job_id: str, status: str, audio_url: Optional[str] = None, error_message: Optional[str] = None):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    if audio_url and error_message:
+        cursor.execute("UPDATE conversion_jobs SET status = ?, audio_url = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (status, audio_url, error_message, job_id))
+    elif audio_url:
+        cursor.execute("UPDATE conversion_jobs SET status = ?, audio_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (status, audio_url, job_id))
+    elif error_message:
+        cursor.execute("UPDATE conversion_jobs SET status = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (status, error_message, job_id))
+    else:
+        cursor.execute("UPDATE conversion_jobs SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (status, job_id))
+    conn.commit()
+    conn.close()
+
+
 def update_job_status(job_id: str, status: str, audio_url: Optional[str] = None, error_message: Optional[str] = None):
+    global supabase
     if supabase:
         update_data = {"status": status, "updated_at": "now()"}
         if audio_url:
             update_data["audio_url"] = audio_url
         if error_message:
             update_data["error_message"] = error_message
-        
+
         try:
-            supabase.table("conversion_jobs").update(update_data).eq("id", job_id).execute()
+            response = supabase.table("conversion_jobs").update(update_data).eq("id", job_id).execute()
+            if hasattr(response, "error") and response.error:
+                raise Exception(response.error)
+            return
         except Exception as e:
-            print(f"Supabase update failed for job {job_id}: {e}")
-    else:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        if audio_url and error_message:
-            cursor.execute("UPDATE conversion_jobs SET status = ?, audio_url = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (status, audio_url, error_message, job_id))
-        elif audio_url:
-            cursor.execute("UPDATE conversion_jobs SET status = ?, audio_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (status, audio_url, job_id))
-        elif error_message:
-            cursor.execute("UPDATE conversion_jobs SET status = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (status, error_message, job_id))
-        else:
-            cursor.execute("UPDATE conversion_jobs SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (status, job_id))
-        conn.commit()
-        conn.close()
+            print(f"Supabase update failed for job {job_id}: {e}. Falling back to SQLite.")
+            supabase = None
+
+    _update_job_status_sqlite(job_id, status, audio_url, error_message)
 
 
 def is_supabase_user_valid(user_id: str) -> bool:
@@ -160,22 +165,35 @@ def is_supabase_user_valid(user_id: str) -> bool:
     try:
         response = supabase.table("profiles").select("id").eq("id", user_id).limit(1).execute()
         if hasattr(response, "error") and response.error:
-            print(f"⚠ Supabase profile query failed for user {user_id}: {response.error}")
+            print(f"[ERROR] Supabase profile query failed for user {user_id}: {response.error}")
             return False
 
         data = getattr(response, "data", None)
         if data is None:
-            print(f"⚠ Unexpected Supabase profile response format for user {user_id}: {response}")
+            print(f"[ERROR] Unexpected Supabase profile response format for user {user_id}: {response}")
             return False
 
         return bool(data)
     except Exception as e:
-        print(f"⚠ Supabase profile validation failed for user {user_id}: {e}")
+        print(f"[ERROR] Supabase profile validation failed for user {user_id}: {e}")
         return False
 
 
+def _insert_job_record_sqlite(job_id: str, user_id: str, filename: str, pdf_url: str, settings: dict, status: str = "pending"):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT OR IGNORE INTO conversion_jobs (id, user_id, filename, status, pdf_url, settings) VALUES (?, ?, ?, ?, ?, ?)",
+        (job_id, user_id, filename, status, pdf_url, json.dumps(settings))
+    )
+    conn.commit()
+    conn.close()
+
+
 def create_job_record(job_id: str, user_id: str, filename: str, pdf_url: str, settings: dict):
+    global supabase
     try:
+        created_in_supabase = False
         if supabase:
             try:
                 if is_supabase_user_valid(user_id):
@@ -191,27 +209,20 @@ def create_job_record(job_id: str, user_id: str, filename: str, pdf_url: str, se
                     if hasattr(response, "error") and response.error:
                         raise Exception(response.error)
 
-                    print(f"✓ Job {job_id} created in Supabase")
-                    return
+                    print(f"[OK] Job {job_id} created in Supabase")
+                    created_in_supabase = True
                 else:
-                    print(f"⚠ Supabase user {user_id} not found in profiles. Using SQLite fallback.")
+                    print(f"[WARN] Supabase user {user_id} not found in profiles. Using SQLite fallback.")
             except Exception as e:
-                print(f"⚠ Supabase job insert failed for user {user_id}: {e}. Falling back to SQLite.")
+                print(f"[ERROR] Supabase job insert failed for user {user_id}: {e}. Falling back to SQLite.")
+                supabase = None
 
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO conversion_jobs (id, user_id, filename, status, pdf_url, settings) VALUES (?, ?, ?, ?, ?, ?)",
-            (job_id, user_id, filename, "pending", pdf_url, json.dumps(settings))
-        )
-        conn.commit()
-        conn.close()
-        print(f"✓ Job {job_id} created in SQLite")
-    except Exception as e:
-        print(f"Error creating job record: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to create job record: {str(e)}")
+        _insert_job_record_sqlite(job_id, user_id, filename, pdf_url, settings)
+        print(f"[OK] Job {job_id} created in SQLite")
+
+        if created_in_supabase:
+            print(f"[OK] Local mirror created for job {job_id}.")
+
     except Exception as e:
         print(f"Error creating job record: {e}")
         import traceback
@@ -242,7 +253,7 @@ async def process_conversion_task(job_id: str, local_pdf_path: str, filename: st
             raise Exception("No readable text found in PDF. Make sure it is not a scanned/image-only PDF.")
             
         # Step 2: Split text into chunks
-        chunks = pdf_service.chunk_text(cleaned_text, max_chars=4000)
+        chunks = pdf_service.chunk_text(cleaned_text, max_chars=1200)
         
         # Step 3: Run Text-To-Speech Synthesis
         success = await tts_service.synthesize_chunks(chunks, settings, local_audio_path)
@@ -290,19 +301,19 @@ async def process_conversion_task(job_id: str, local_pdf_path: str, filename: st
 @app.on_event("startup")
 async def startup_event():
     print("\n" + "="*60)
-    print("🚀 AudioAI Backend Starting Up...")
+    print("[STARTUP] AudioAI Backend Starting Up...")
     print("="*60)
-    print(f"📦 Services:")
-    print(f"  - PDF Service: {'✓' if pdf_service else '✗'}")
-    print(f"  - TTS Service: {'✓' if tts_service else '✗'}")
+    print(f"[SERVICES] Services:")
+    print(f"  - PDF Service: {'[OK]' if pdf_service else '[FAIL]'}")
+    print(f"  - TTS Service: {'[OK]' if tts_service else '[FAIL]'}")
     if tts_service:
-        print(f"    - Google TTS: {'✓' if tts_service.google_available else '✗'}")
-    print(f"📊 Database:")
-    print(f"  - Supabase: {'✓' if supabase else '✗'}")
+        print(f"    - Google TTS: {'[OK]' if tts_service.google_available else '[FAIL]'}")
+    print(f"[DATABASE] Database:")
+    print(f"  - Supabase: {'[OK]' if supabase else '[FAIL]'}")
     print(f"  - Sandbox DB: {DB_PATH}")
-    print(f"💾 Storage:")
-    print(f"  - Uploads: {UPLOAD_DIR} ({'✓' if os.path.exists(UPLOAD_DIR) else '✗'})")
-    print(f"  - Audio: {AUDIO_DIR} ({'✓' if os.path.exists(AUDIO_DIR) else '✗'})")
+    print(f"[STORAGE] Storage:")
+    print(f"  - Uploads: {UPLOAD_DIR} ({'[OK]' if os.path.exists(UPLOAD_DIR) else '[FAIL]'})")
+    print(f"  - Audio: {AUDIO_DIR} ({'[OK]' if os.path.exists(AUDIO_DIR) else '[FAIL]'})")
     print("="*60 + "\n")
 
 @app.get("/api/health")
@@ -378,30 +389,37 @@ async def convert_pdf(
 
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str):
+    global supabase
     try:
         if supabase:
-            res = supabase.table("conversion_jobs").select("*").eq("id", job_id).execute()
-            if not res.data:
-                raise HTTPException(status_code=404, detail="Job not found")
-            return res.data[0]
-        else:
-            conn = sqlite3.connect(DB_PATH)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM conversion_jobs WHERE id = ?", (job_id,))
-            row = cursor.fetchone()
-            conn.close()
+            try:
+                res = supabase.table("conversion_jobs").select("*").eq("id", job_id).execute()
+                if hasattr(res, "error") and res.error:
+                    raise Exception(res.error)
+                if not res.data:
+                    raise HTTPException(status_code=404, detail="Job not found")
+                return res.data[0]
+            except Exception as e:
+                print(f"Supabase read failed for job {job_id}: {e}. Falling back to SQLite.")
+                supabase = None
+
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM conversion_jobs WHERE id = ?", (job_id,))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row:
+            raise HTTPException(status_code=404, detail="Job not found")
             
-            if not row:
-                raise HTTPException(status_code=404, detail="Job not found")
-                
-            job = dict(row)
-            if job.get("settings"):
-                try:
-                    job["settings"] = json.loads(job["settings"])
-                except:
-                    pass
-            return job
+        job = dict(row)
+        if job.get("settings"):
+            try:
+                job["settings"] = json.loads(job["settings"])
+            except:
+                pass
+        return job
     except HTTPException:
         raise
     except Exception as e:
@@ -410,29 +428,35 @@ def get_job(job_id: str):
 
 @app.get("/api/users/{user_id}/jobs")
 def get_user_jobs(user_id: str):
+    global supabase
     try:
         if supabase:
-            res = supabase.table("conversion_jobs").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
-            return res.data
-        else:
-            conn = sqlite3.connect(DB_PATH)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM conversion_jobs WHERE user_id = ? ORDER BY created_at DESC", (user_id,))
-            rows = cursor.fetchall()
-            conn.close()
-            
-            jobs = []
-            for row in rows:
-                job = dict(row)
-                if job.get("settings"):
-                    try:
-                        job["settings"] = json.loads(job["settings"])
-                    except:
-                        pass
-                jobs.append(job)
-            return jobs
+            try:
+                res = supabase.table("conversion_jobs").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
+                if hasattr(res, "error") and res.error:
+                    raise Exception(res.error)
+                return res.data
+            except Exception as e:
+                print(f"Supabase read failed for user {user_id}: {e}. Falling back to SQLite.")
+                supabase = None
+
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM conversion_jobs WHERE user_id = ? ORDER BY created_at DESC", (user_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        
+        jobs = []
+        for row in rows:
+            job = dict(row)
+            if job.get("settings"):
+                try:
+                    job["settings"] = json.loads(job["settings"])
+                except:
+                    pass
+            jobs.append(job)
+        return jobs
     except Exception as e:
         print(f"Error fetching jobs for user {user_id}: {e}")
-        # Return empty list instead of error to prevent 500
         return []

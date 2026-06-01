@@ -4,8 +4,10 @@ import {
   RefreshCw, CheckCircle2, AlertCircle, Clock, VolumeX, SkipBack, SkipForward
 } from 'lucide-react';
 
-// Get backend API URL from environment variable
-const API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+// Get backend API URL from environment variable, window override, or same-origin fallback
+const rawBackend = import.meta.env.VITE_BACKEND_URL;
+const API_URL = rawBackend || window?.__BACKEND_URL || window.location.origin || 'http://localhost:8000';
+console.info('Using backend API_URL:', API_URL);
 
 export default function Dashboard({ session, supabase, isSandboxMode, onSignOut }) {
   const [file, setFile] = useState(null);
@@ -127,7 +129,7 @@ export default function Dashboard({ session, supabase, isSandboxMode, onSignOut 
         }
       }
     } catch (err) {
-      console.error('Error fetching jobs:', err);
+      console.error('Error fetching jobs from', API_URL, err);
     }
   };
 
@@ -284,7 +286,7 @@ export default function Dashboard({ session, supabase, isSandboxMode, onSignOut 
   return (
     <div className="flex-1 flex flex-col h-screen overflow-hidden">
       {/* Header */}
-      <header className="glass-panel border-b border-slate-800/40 px-6 py-4 flex items-center justify-between shrink-0">
+      <header className="glass-panel border-b border-slate-800/40 px-4 md:px-6 py-3.5 md:py-4 flex flex-col sm:flex-row gap-3 sm:gap-0 items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
           <div className="p-1.5 bg-gradient-to-tr from-violet-600 to-indigo-600 rounded-xl">
             <Volume2 className="w-5 h-5 text-white" />
@@ -294,14 +296,14 @@ export default function Dashboard({ session, supabase, isSandboxMode, onSignOut 
           </span>
         </div>
         
-        <div className="flex items-center gap-4">
+        <div className="flex items-center justify-between sm:justify-end gap-3 sm:gap-4 w-full sm:w-auto">
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900/50 border border-slate-800/40">
             <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></div>
-            <span className="text-xs font-semibold text-slate-300">Welcome, {userName}</span>
+            <span className="text-xs font-semibold text-slate-300 truncate max-w-[120px] sm:max-w-none">Welcome, {userName}</span>
           </div>
           <button 
             onClick={onSignOut} 
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-rose-400 hover:text-rose-300 font-medium transition cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-rose-400 hover:text-rose-300 font-medium transition cursor-pointer shrink-0"
           >
             <LogOut className="w-3.5 h-3.5" />
             <span>Sign Out</span>
@@ -310,9 +312,9 @@ export default function Dashboard({ session, supabase, isSandboxMode, onSignOut 
       </header>
 
       {/* Main Studio Area */}
-      <main className="flex-1 flex overflow-hidden">
+      <main className="flex-1 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden pb-48 lg:pb-0">
         {/* Left Section: Creator Controls & History */}
-        <section className="w-1/2 p-6 flex flex-col gap-6 overflow-y-auto border-r border-slate-800/40">
+        <section className="w-full lg:w-1/2 p-4 md:p-6 flex flex-col gap-6 overflow-y-auto border-b lg:border-b-0 lg:border-r border-slate-800/40">
           
           {/* Uploader Card */}
           <div className="glass-panel p-6 rounded-2xl">
@@ -376,7 +378,7 @@ export default function Dashboard({ session, supabase, isSandboxMode, onSignOut 
               </div>
 
               {/* Voice and Speech Engine Configuration */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">Voice Profile</label>
                   <select 
@@ -394,13 +396,13 @@ export default function Dashboard({ session, supabase, isSandboxMode, onSignOut 
                 
                 <div>
                   <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">Reading Speed ({speed}x)</label>
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 h-10">
                     <input
                       type="range"
                       min="0.75"
                       max="1.5"
                       step="0.05"
-                      className="flex-1 accent-violet-500 h-1 rounded-lg bg-slate-800"
+                      className="flex-1 accent-violet-500 h-1 rounded-lg bg-slate-800 cursor-pointer"
                       value={speed}
                       onChange={(e) => setSpeed(parseFloat(e.target.value))}
                     />
@@ -520,8 +522,8 @@ export default function Dashboard({ session, supabase, isSandboxMode, onSignOut 
         </section>
 
         {/* Right Section: PDF Document Visualizer */}
-        <section className="w-1/2 p-6 flex flex-col overflow-hidden bg-slate-950/20">
-          <div className="flex-1 glass-panel rounded-2xl overflow-hidden flex flex-col">
+        <section className="w-full lg:w-1/2 h-[450px] sm:h-[600px] lg:h-auto p-4 md:p-6 flex flex-col bg-slate-950/20">
+          <div className="flex-1 glass-panel rounded-2xl overflow-hidden flex flex-col h-full">
             {/* Header bar */}
             <div className="bg-slate-950/50 border-b border-slate-800/40 px-5 py-3.5 flex items-center justify-between shrink-0">
               <span className="text-sm font-semibold text-slate-300 font-outfit">Document Viewer</span>
@@ -567,9 +569,9 @@ export default function Dashboard({ session, supabase, isSandboxMode, onSignOut 
         </section>
       </main>
 
-      {/* Floating Audio Controller (Sticky Bottom) */}
-      <footer className="glass-panel border-t border-slate-800/40 px-8 py-5 shrink-0 bg-slate-950/80 backdrop-blur-xl z-20">
-        <div className="max-w-4xl mx-auto flex items-center justify-between gap-6">
+      {/* Floating Audio Controller (Sticky/Fixed Bottom) */}
+      <footer className="fixed lg:sticky bottom-0 left-0 right-0 glass-panel border-t border-slate-800/40 px-4 md:px-8 py-4 md:py-5 bg-slate-950/95 backdrop-blur-xl z-20">
+        <div className="max-w-6xl mx-auto flex flex-col lg:flex-row items-center justify-between gap-4 lg:gap-6">
           {/* Audio Tag */}
           {audioUrl && (
             <audio 
@@ -580,10 +582,10 @@ export default function Dashboard({ session, supabase, isSandboxMode, onSignOut 
           )}
 
           {/* Current Selection details */}
-          <div className="w-1/4 min-w-0">
+          <div className="w-full lg:w-1/4 min-w-0 text-center lg:text-left flex flex-col items-center lg:items-start">
             {activeJob ? (
               <>
-                <p className="text-sm font-bold text-white truncate" title={activeJob.filename}>
+                <p className="text-sm font-bold text-white truncate max-w-[280px] sm:max-w-md lg:max-w-xs" title={activeJob.filename}>
                   {activeJob.filename}
                 </p>
                 <p className="text-xs text-slate-400 mt-0.5">
@@ -599,7 +601,7 @@ export default function Dashboard({ session, supabase, isSandboxMode, onSignOut 
           </div>
 
           {/* Playback Controls & Progress */}
-          <div className="flex-1 flex flex-col items-center gap-2">
+          <div className="w-full lg:flex-1 flex flex-col items-center gap-2">
             <div className="flex items-center gap-4">
               {/* Skip Back 10s */}
               <button 
@@ -648,7 +650,7 @@ export default function Dashboard({ session, supabase, isSandboxMode, onSignOut 
           </div>
 
           {/* Speed settings & Volume controls */}
-          <div className="w-1/4 flex items-center justify-end gap-4">
+          <div className="w-full lg:w-1/4 flex items-center justify-center lg:justify-end gap-3 md:gap-4 mt-1 lg:mt-0">
             {/* Speed Multiplier selectors */}
             <div className="flex items-center gap-1.5">
               {[0.75, 1.0, 1.25, 1.5].map(v => (
