@@ -51,14 +51,18 @@ export default function App() {
 
   useEffect(() => {
     if (isSandboxMode) {
-      // Auto-login sandbox session with proper UUID
-      setSession({
-        user: {
-          id: getSandboxUserId(),
-          email: 'sandbox@audioai.dev',
-          user_metadata: { full_name: 'Sandbox Developer' }
-        }
-      });
+      // Only auto-login in sandbox mode on localhost (for developer convenience).
+      // On production (e.g. Vercel), always show the login page.
+      const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      if (isLocalhost) {
+        setSession({
+          user: {
+            id: getSandboxUserId(),
+            email: 'sandbox@audioai.dev',
+            user_metadata: { full_name: 'Sandbox Developer' }
+          }
+        });
+      }
       return;
     }
 
