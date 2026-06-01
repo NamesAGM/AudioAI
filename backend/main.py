@@ -260,37 +260,63 @@ async def process_conversion_task(job_id: str, local_pdf_path: str, filename: st
         if not success:
             raise Exception("TTS Synthesis failed")
             
-        # Step 4: Upload audio to storage / host locally
+        # Step 4: Upload files to Supabase Storage (persistent) or keep locally (ephemeral)
         audio_url = f"/static/audio/{job_id}.mp3"
+        pdf_url_final = f"/static/uploads/{job_id}.pdf"
         
         if supabase:
-            # Upload PDF to Supabase Storage
-            pdf_bucket = "pdfs"
-            pdf_storage_name = f"{job_id}.pdf"
-            with open(local_pdf_path, "rb") as f:
-                supabase.storage.from_(pdf_bucket).upload(
-                    pdf_storage_name, f, file_options={"content-type": "application/pdf"}
-                )
-            # Fetch public URL
-            pdf_url = supabase.storage.from_(pdf_bucket).get_public_url(pdf_storage_name)
-            
-            # Upload Audio to Supabase Storage
-            audio_bucket = "audio"
-            audio_storage_name = f"{job_id}.mp3"
-            with open(local_audio_path, "rb") as f:
-                supabase.storage.from_(audio_bucket).upload(
-                    audio_storage_name, f, file_options={"content-type": "audio/mpeg"}
-                )
-            # Fetch public URL
-            audio_url = supabase.storage.from_(audio_bucket).get_public_url(audio_storage_name)
+            try:
+                # Upload PDF to Supabase Storage
+                pdf_bucket = "pdfs"
+                pdf_storage_name = f"{job_id}.pdf"
+                print(f"[STORAGE] Uploading PDF to Supabase bucket '{pdf_bucket}'...")
+                with open(local_pdf_path, "rb") as f:
+                    supabase.storage.from_(pdf_bucket).upload(
+                        pdf_storage_name, f, file_options={"content-type": "application/pdf"}
+                    )
+                pdf_url_final = supabase.storage.from_(pdf_bucket).get_public_url(pdf_storage_name)
+                print(f"[STORAGE] PDF uploaded: {pdf_url_final}")
+                
+                # Upload Audio to Supabase Storage
+                audio_bucket = "audio"
+                audio_storage_name = f"{job_id}.mp3"
+                print(f"[STORAGE] Uploading audio to Supabase bucket '{audio_bucket}'...")
+                with open(local_audio_path, "rb") as f:
+                    supabase.storage.from_(audio_bucket).upload(
+                        audio_storage_name, f, file_options={"content-type": "audio/mpeg"}
+                    )
+                audio_url = supabase.storage.from_(audio_bucket).get_public_url(audio_storage_name)
+                print(f"[STORAGE] Audio uploaded: {audio_url}")
+                
+            except Exception as storage_err:
+                print(f"[STORAGE ERROR] Failed to upload to Supabase Storage: {storage_err}")
+                print("[STORAGE] Falling back to local file storage. Files will NOT persist across deploys.")
+                audio_url = f"/static/audio/{job_id}.mp3"
+                pdf_url_final = f"/static/uploads/{job_id}.pdf"
             
         update_job_status(job_id, "completed", audio_url=audio_url)
+        
+        # Also update the pdf_url in the database to point to Supabase Storage
+        if supabase and pdf_url_final.startswith("http"):
+            try:
+                supabase.table("conversion_jobs").update({"pdf_url": pdf_url_final}).eq("id", job_id).execute()
+            except Exception:
+                pass  # Non-critical, pdf_url is mainly for preview
+        else:
+            # Update SQLite with local pdf_url
+            try:
+                conn = sqlite3.connect(DB_PATH)
+                conn.execute("UPDATE conversion_jobs SET pdf_url = ? WHERE id = ?", (pdf_url_final, job_id))
+                conn.commit()
+                conn.close()
+            except Exception:
+                pass
         
     except Exception as e:
         print(f"Error in job {job_id}: {e}")
         update_job_status(job_id, "failed", error_message=str(e))
     finally:
-        # Keep local files in sandbox directory, or clean up if using production storage
+        # Clean up local temp files after uploading to Supabase
         if supabase:
             if os.path.exists(local_pdf_path):
                 os.remove(local_pdf_path)
