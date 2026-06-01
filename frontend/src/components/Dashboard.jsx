@@ -123,7 +123,10 @@ export default function Dashboard({ session, supabase, isSandboxMode, onSignOut 
           if (updatedActive && updatedActive.status !== activeJob.status) {
             setActiveJob(updatedActive);
             if (updatedActive.status === 'completed' && updatedActive.audio_url) {
-              setAudioUrl(updatedActive.audio_url);
+              const fullAudioUrl = updatedActive.audio_url.startsWith('http')
+                ? updatedActive.audio_url
+                : `${API_URL}${updatedActive.audio_url}`;
+              setAudioUrl(fullAudioUrl);
             }
           }
         }
@@ -214,7 +217,7 @@ export default function Dashboard({ session, supabase, isSandboxMode, onSignOut 
         id: job.job_id,
         filename: job.filename,
         status: job.status,
-        pdf_url: `/static/uploads/${job.job_id}.pdf`
+        pdf_url: `${API_URL}/static/uploads/${job.job_id}.pdf`
       };
       setActiveJob(createdJob);
       setAudioUrl(null); // Wait for processing
@@ -230,7 +233,10 @@ export default function Dashboard({ session, supabase, isSandboxMode, onSignOut 
   const handlePlayJob = (job) => {
     setActiveJob(job);
     if (job.status === 'completed' && job.audio_url) {
-      setAudioUrl(job.audio_url);
+      const fullAudioUrl = job.audio_url.startsWith('http')
+        ? job.audio_url
+        : `${API_URL}${job.audio_url}`;
+      setAudioUrl(fullAudioUrl);
       setIsPlaying(true);
       // If audio element exists, play it
       setTimeout(() => {
@@ -243,7 +249,10 @@ export default function Dashboard({ session, supabase, isSandboxMode, onSignOut 
       setIsPlaying(false);
     }
     // Set PDF preview (either uploaded blob or hosted PDF url)
-    setPdfPreviewUrl(job.pdf_url);
+    const fullPdfUrl = job.pdf_url.startsWith('http')
+      ? job.pdf_url
+      : `${API_URL}${job.pdf_url}`;
+    setPdfPreviewUrl(fullPdfUrl);
   };
 
   const togglePlay = () => {
