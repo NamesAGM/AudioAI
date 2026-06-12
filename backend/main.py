@@ -18,8 +18,10 @@ from services.tts_service import TTSService
 from services.rag_service import RAGService
 from services.llm_provider import LLMProvider
 
-# Load configuration
-load_dotenv()
+# Load configuration from the local backend directory explicitly
+from pathlib import Path
+dotenv_path = Path(__file__).resolve().parent / ".env"
+load_dotenv(dotenv_path=dotenv_path)
 
 app = FastAPI(title="AudioAI API", description="PDF to Audio conversion backend server")
 
