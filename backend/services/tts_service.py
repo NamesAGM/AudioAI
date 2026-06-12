@@ -12,7 +12,7 @@ try:
     from pydub import AudioSegment
     PYDUB_AVAILABLE = True
 except (ImportError, ModuleNotFoundError):
-    print("⚠ pydub not available - audio merging will be limited")
+    print("[WARNING] pydub not available - audio merging will be limited")
     PYDUB_AVAILABLE = False
 
 class TTSService:

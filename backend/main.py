@@ -15,6 +15,8 @@ from supabase import create_client, Client
 # Import local services
 from services.pdf_service import PDFService
 from services.tts_service import TTSService
+from services.rag_service import RAGService
+from services.llm_provider import LLMProvider
 
 # Load configuration
 load_dotenv()
@@ -98,6 +100,13 @@ def init_sandbox_db():
                 error_message TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS pdf_texts (
+                job_id TEXT PRIMARY KEY,
+                extracted_text TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         conn.commit()
@@ -251,6 +260,17 @@ async def process_conversion_task(job_id: str, local_pdf_path: str, filename: st
         
         if not cleaned_text.strip():
             raise Exception("No readable text found in PDF. Make sure it is not a scanned/image-only PDF.")
+            
+        # Cache the extracted text for AI Q&A
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("INSERT OR REPLACE INTO pdf_texts (job_id, extracted_text) VALUES (?, ?)", (job_id, cleaned_text))
+            conn.commit()
+            conn.close()
+            print(f"[OK] Cached extracted text for job {job_id}")
+        except Exception as db_err:
+            print(f"[ERROR] Failed to cache extracted text for job {job_id}: {db_err}")
             
         # Step 2: Split text into chunks
         chunks = pdf_service.chunk_text(cleaned_text, max_chars=1200)
@@ -486,3 +506,157 @@ def get_user_jobs(user_id: str):
     except Exception as e:
         print(f"Error fetching jobs for user {user_id}: {e}")
         return []
+
+class AskRequest(BaseModel):
+    question: str
+    voice_name: Optional[str] = "en-US-AvaNeural"
+    language_code: Optional[str] = "en-US"
+    speaking_rate: Optional[float] = 1.0
+    gender: Optional[str] = "FEMALE"
+    read_aloud: Optional[bool] = False
+
+@app.get("/api/ai/status")
+def get_ai_status():
+    """
+    Returns active AI Provider status.
+    """
+    try:
+        return LLMProvider.check_status()
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/api/jobs/{job_id}/ask")
+async def ask_pdf(job_id: str, req: AskRequest):
+    """
+    Asks a question about a specific PDF job.
+    Uses RAG to find relevant text, queries LLM, and optionally speaks the answer.
+    """
+    # 1. Fetch text of PDF
+    pdf_text = None
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT extracted_text FROM pdf_texts WHERE job_id = ?", (job_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            pdf_text = row[0]
+    except Exception as e:
+        print(f"Error reading pdf_texts cache: {e}")
+
+    # Fallback: if not in database cache, try to extract it from the file
+    if not pdf_text:
+        print(f"Cache miss for job {job_id}. Fetching PDF and extracting...")
+        job = get_job(job_id) # fetches job info (throws 404 if not found)
+        pdf_url = job.get("pdf_url")
+        
+        local_path = os.path.join(UPLOAD_DIR, f"{job_id}.pdf")
+        
+        # If the local file doesn't exist, try to download it from pdf_url
+        if not os.path.exists(local_path):
+            if pdf_url and pdf_url.startswith("http"):
+                try:
+                    import urllib.request
+                    print(f"Downloading PDF from remote URL: {pdf_url}")
+                    urllib.request.urlretrieve(pdf_url, local_path)
+                except Exception as dl_err:
+                    raise HTTPException(status_code=500, detail=f"Failed to download PDF for analysis: {dl_err}")
+            else:
+                # Check if it is stored in static upload folder locally
+                static_local = os.path.join(STATIC_DIR, "uploads", f"{job_id}.pdf")
+                if os.path.exists(static_local):
+                    local_path = static_local
+                else:
+                    raise HTTPException(status_code=404, detail="PDF source file not found. Could not perform AI analysis.")
+                    
+        # Extract and clean text
+        try:
+            if not pdf_service:
+                raise Exception("PDF service not initialized")
+            raw_text = pdf_service.extract_text(local_path)
+            pdf_text = pdf_service.clean_text(raw_text)
+            
+            if not pdf_text.strip():
+                raise Exception("No readable text in PDF.")
+                
+            # Cache it
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("INSERT OR REPLACE INTO pdf_texts (job_id, extracted_text) VALUES (?, ?)", (job_id, pdf_text))
+            conn.commit()
+            conn.close()
+        except Exception as ext_err:
+            raise HTTPException(status_code=500, detail=f"Failed to parse PDF: {str(ext_err)}")
+
+    if not pdf_text or not pdf_text.strip():
+        raise HTTPException(status_code=400, detail="The PDF contains no readable text.")
+
+    # 2. Retrieve relevant context
+    context = RAGService.retrieve_context(pdf_text, req.question, top_k=4)
+
+    # 3. Formulate RAG Prompt
+    import re
+    prompt = f"""You are a helpful AI assistant answering questions about the provided PDF document.
+Answer the question concisely and accurately using ONLY the PDF context below.
+If the answer cannot be found in the context, say: "I cannot find the answer in the document." Do not make up information.
+
+PDF Context:
+{context}
+
+Question:
+{req.question}
+
+Answer:"""
+
+    # 4. Generate answer using LLM
+    try:
+        answer = LLMProvider.query_llm(prompt)
+    except Exception as llm_err:
+        raise HTTPException(status_code=500, detail=f"AI Engine failed to generate answer: {str(llm_err)}")
+
+    # 5. Generate TTS read aloud if requested
+    audio_url = None
+    if req.read_aloud and tts_service:
+        try:
+            qa_id = str(uuid.uuid4())
+            qa_audio_path = os.path.join(AUDIO_DIR, f"qa_{job_id}_{qa_id}.mp3")
+            
+            # Remove markdown formatting for cleaner TTS output
+            clean_tts_text = re.sub(r'[\*\#\`\_]', '', answer)
+            
+            settings = {
+                "voice_name": req.voice_name,
+                "language_code": req.language_code,
+                "speaking_rate": req.speaking_rate,
+                "gender": req.gender
+            }
+            
+            success = await tts_service.synthesize_chunks([clean_tts_text], settings, qa_audio_path)
+            if success:
+                audio_url_final = f"/static/audio/qa_{job_id}_{qa_id}.mp3"
+                
+                # If Supabase is used, upload it
+                if supabase:
+                    try:
+                        audio_bucket = "audio"
+                        audio_storage_name = f"qa_{job_id}_{qa_id}.mp3"
+                        with open(qa_audio_path, "rb") as f:
+                            supabase.storage.from_(audio_bucket).upload(
+                                audio_storage_name, f, file_options={"content-type": "audio/mpeg"}
+                            )
+                        audio_url_final = supabase.storage.from_(audio_bucket).get_public_url(audio_storage_name)
+                        
+                        # Remove local file
+                        if os.path.exists(qa_audio_path):
+                            os.remove(qa_audio_path)
+                    except Exception as st_err:
+                        print(f"Supabase upload failed for Q&A audio: {st_err}. Serving locally.")
+                
+                audio_url = audio_url_final
+        except Exception as tts_err:
+            print(f"TTS Synthesis failed for Q&A response: {tts_err}")
+
+    return {
+        "answer": answer,
+        "audio_url": audio_url
+    }
