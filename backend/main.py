@@ -283,6 +283,7 @@ async def process_conversion_task(job_id: str, local_pdf_path: str, filename: st
         # Step 4: Upload files to Supabase Storage (persistent) or keep locally (ephemeral)
         audio_url = f"/static/audio/{job_id}.mp3"
         pdf_url_final = f"/static/uploads/{job_id}.pdf"
+        uploaded_to_supabase = False
         
         if supabase:
             try:
@@ -306,6 +307,7 @@ async def process_conversion_task(job_id: str, local_pdf_path: str, filename: st
                         audio_storage_name, f, file_options={"content-type": "audio/mpeg"}
                     )
                 audio_url = supabase.storage.from_(audio_bucket).get_public_url(audio_storage_name)
+                uploaded_to_supabase = True
                 print(f"[STORAGE] Audio uploaded: {audio_url}")
                 
             except Exception as storage_err:
@@ -313,6 +315,7 @@ async def process_conversion_task(job_id: str, local_pdf_path: str, filename: st
                 print("[STORAGE] Falling back to local file storage. Files will NOT persist across deploys.")
                 audio_url = f"/static/audio/{job_id}.mp3"
                 pdf_url_final = f"/static/uploads/{job_id}.pdf"
+                uploaded_to_supabase = False
             
         update_job_status(job_id, "completed", audio_url=audio_url)
         
@@ -336,8 +339,8 @@ async def process_conversion_task(job_id: str, local_pdf_path: str, filename: st
         print(f"Error in job {job_id}: {e}")
         update_job_status(job_id, "failed", error_message=str(e))
     finally:
-        # Clean up local temp files after uploading to Supabase
-        if supabase:
+        # Clean up local temp files after uploading to Supabase only if upload succeeded
+        if supabase and uploaded_to_supabase:
             if os.path.exists(local_pdf_path):
                 os.remove(local_pdf_path)
             if os.path.exists(local_audio_path):
@@ -612,7 +615,24 @@ Answer:"""
     try:
         answer = LLMProvider.query_llm(prompt)
     except Exception as llm_err:
-        raise HTTPException(status_code=500, detail=f"AI Engine failed to generate answer: {str(llm_err)}")
+        # Provide actionable advice depending on configured provider
+        provider = LLMProvider.get_active_provider()
+        status_info = LLMProvider.check_status()
+        suggestion = ""
+        if provider == 'ollama':
+            suggestion = (
+                "Make sure Ollama is running locally (default http://localhost:11434) "
+                "and that the model in OLLAMA_MODEL is available, or set AI_PROVIDER to 'gemini' or 'openai' with proper API keys."
+            )
+        elif provider == 'gemini':
+            suggestion = "Verify `GEMINI_API_KEY` is set in backend/.env or environment and restart the backend."
+        elif provider == 'openai':
+            suggestion = "Verify `OPENAI_API_KEY` is set in backend/.env or environment and restart the backend."
+        else:
+            suggestion = "Check your AI provider configuration and environment variables."
+
+        detail_msg = f"AI Engine failed to generate answer: {str(llm_err)}. Provider={provider}. Status={status_info}. {suggestion}"
+        raise HTTPException(status_code=500, detail=detail_msg)
 
     # 5. Generate TTS read aloud if requested
     audio_url = None

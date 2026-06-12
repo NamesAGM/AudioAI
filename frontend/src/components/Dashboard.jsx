@@ -957,11 +957,31 @@ export default function Dashboard({ session, supabase, isSandboxMode, onSignOut 
               ref={audioRef} 
               src={audioUrl} 
               autoPlay={isPlaying}
+              onCanPlay={() => {
+                try {
+                  if (audioRef.current) setDuration(audioRef.current.duration || 0);
+                } catch (e) { console.warn('onCanPlay handler error', e); }
+              }}
+              onError={(e) => {
+                console.error('Audio failed to load', audioUrl, e);
+                // Friendly UI fallback for unsupported/missing sources
+                alert('Audio failed to load. Check the backend is running and the audio file exists.');
+                setAudioUrl(null);
+                setIsPlaying(false);
+              }}
             />
           )}
 
           {/* Q&A Audio element for Q&A TTS reading */}
-          <audio ref={qaAudioRef} className="hidden" />
+          <audio 
+            ref={qaAudioRef} 
+            className="hidden" 
+            onError={(e) => {
+              console.error('QA audio failed to load', e);
+              setIsPlayingQaAudio(false);
+              setPlayingQaMsgIndex(null);
+            }}
+          />
 
           {/* Current Selection details */}
           <div className="w-full lg:w-1/4 min-w-0 text-center lg:text-left flex flex-col items-center lg:items-start">
