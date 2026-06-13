@@ -39,6 +39,7 @@ export default function Dashboard({ session, supabase, isSandboxMode, onSignOut 
   const [isGeneratingAnswer, setIsGeneratingAnswer] = useState(false);
   const [readAloudAnswer, setReadAloudAnswer] = useState(true);
   const [aiStatus, setAiStatus] = useState(null);
+  const [selectedModel, setSelectedModel] = useState('');
   const [isPlayingQaAudio, setIsPlayingQaAudio] = useState(false);
   const [playingQaMsgIndex, setPlayingQaMsgIndex] = useState(null);
   
@@ -94,6 +95,9 @@ export default function Dashboard({ session, supabase, isSandboxMode, onSignOut 
       if (res.ok) {
         const data = await res.json();
         setAiStatus(data);
+        if (data.model) {
+          setSelectedModel(data.model);
+        }
       }
     } catch (err) {
       console.error('Error fetching AI status:', err);
@@ -317,7 +321,8 @@ export default function Dashboard({ session, supabase, isSandboxMode, onSignOut 
           language_code: voiceObj.lang || 'en-US',
           speaking_rate: speed,
           gender: voiceObj.gender || 'FEMALE',
-          read_aloud: readAloudAnswer
+          read_aloud: readAloudAnswer,
+          model: selectedModel || undefined
         })
       });
 
@@ -928,7 +933,7 @@ export default function Dashboard({ session, supabase, isSandboxMode, onSignOut 
                           <Send className="w-4 h-4" />
                         </button>
                       </form>
-                      <div className="flex items-center gap-2 px-1">
+                      <div className="flex items-center justify-between gap-4 px-1 mt-1">
                         <label className="flex items-center gap-1.5 cursor-pointer select-none">
                           <input
                             type="checkbox"
@@ -938,6 +943,27 @@ export default function Dashboard({ session, supabase, isSandboxMode, onSignOut 
                           />
                           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Auto-read answers aloud</span>
                         </label>
+                        
+                        {aiStatus?.models && aiStatus.models.length > 0 && (
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider whitespace-nowrap">Model:</span>
+                            <select
+                              value={selectedModel}
+                              onChange={(e) => setSelectedModel(e.target.value)}
+                              className="text-[10px] font-semibold bg-slate-900/80 border border-slate-850 rounded px-2 py-0.5 text-slate-350 focus:outline-none focus:border-violet-500/40 cursor-pointer max-w-[155px] truncate"
+                            >
+                              {aiStatus.models.map((m) => {
+                                const modelId = typeof m === 'string' ? m : m.id;
+                                const modelName = typeof m === 'string' ? m : m.name;
+                                return (
+                                  <option key={modelId} value={modelId} className="bg-slate-950 text-white">
+                                    {modelName}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}

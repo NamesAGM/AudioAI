@@ -552,6 +552,7 @@ class AskRequest(BaseModel):
     speaking_rate: Optional[float] = 1.0
     gender: Optional[str] = "FEMALE"
     read_aloud: Optional[bool] = False
+    model: Optional[str] = None
 
 @app.get("/api/ai/status")
 def get_ai_status():
@@ -648,7 +649,7 @@ Answer:"""
 
     # 4. Generate answer using LLM
     try:
-        answer = LLMProvider.query_llm(prompt)
+        answer = LLMProvider.query_llm(prompt, model_override=req.model)
     except Exception as llm_err:
         # Provide actionable advice depending on configured provider
         provider = LLMProvider.get_active_provider()

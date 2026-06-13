@@ -37,8 +37,16 @@ class LLMProvider:
             try:
                 from google import genai
                 client = genai.Client(api_key=api_key)
-                model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
-                return {"status": "connected", "provider": "gemini", "model": model_name}
+                model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+                free_models = [
+                    {"id": "gemini-2.5-flash", "name": "Gemini 2.5 Flash"},
+                    {"id": "gemini-2.5-flash-lite", "name": "Gemini 2.5 Flash Lite"},
+                    {"id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash"},
+                    {"id": "gemini-2.0-flash-lite", "name": "Gemini 2.0 Flash Lite"},
+                    {"id": "gemini-3.5-flash", "name": "Gemini 3.5 Flash"},
+                    {"id": "gemini-3.1-flash-lite", "name": "Gemini 3.1 Flash Lite"}
+                ]
+                return {"status": "connected", "provider": "gemini", "model": model_name, "models": free_models}
             except Exception as e:
                 return {"status": "error", "provider": "gemini", "message": str(e)}
                 
@@ -72,19 +80,34 @@ class LLMProvider:
             if not api_key:
                 return {"status": "error", "provider": "deepseek", "message": "DEEPSEEK_API_KEY is not set"}
             model_name = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
-            return {"status": "configured", "provider": "deepseek", "model": model_name}
+            return {
+                "status": "configured", 
+                "provider": "deepseek", 
+                "model": model_name,
+                "models": [
+                    {"id": "deepseek-chat", "name": "DeepSeek Chat"}
+                ]
+            }
             
         elif provider == "openai":
             api_key = os.getenv("OPENAI_API_KEY")
             if not api_key:
                 return {"status": "error", "provider": "openai", "message": "OPENAI_API_KEY is not set"}
             model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-            return {"status": "configured", "provider": "openai", "model": model_name}
+            return {
+                "status": "configured", 
+                "provider": "openai", 
+                "model": model_name,
+                "models": [
+                    {"id": "gpt-4o-mini", "name": "GPT-4o Mini"},
+                    {"id": "gpt-4o", "name": "GPT-4o"}
+                ]
+            }
             
         return {"status": "unknown", "provider": provider}
 
     @classmethod
-    def query_llm(cls, prompt: str) -> str:
+    def query_llm(cls, prompt: str, model_override: Optional[str] = None) -> str:
         """
         Queries the active LLM provider with the given prompt and returns the text response.
         """
@@ -96,21 +119,57 @@ class LLMProvider:
                 raise ValueError("GEMINI_API_KEY is not configured in environment variables.")
                 
             from google import genai
-            client = genai.Client(api_key=api_key)
-            model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+            import time
             
-            # Call Gemini API
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt
-            )
-            if not response.text:
-                raise Exception("Empty response received from Gemini API.")
-            return response.text
+            client = genai.Client(api_key=api_key)
+            primary_model = model_override or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+            
+            # Models to try in order of preference (fallback chain)
+            models_to_try = [primary_model]
+            fallbacks = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-3.5-flash", "gemini-3.1-flash-lite"]
+            for fb in fallbacks:
+                if fb not in models_to_try:
+                    models_to_try.append(fb)
+            
+            last_error = None
+            for model_name in models_to_try:
+                # Retry up to 3 times per model with exponential backoff
+                for attempt in range(3):
+                    try:
+                        response = client.models.generate_content(
+                            model=model_name,
+                            contents=prompt
+                        )
+                        if not response.text:
+                            raise Exception("Empty response received from Gemini API.")
+                        return response.text
+                    except Exception as e:
+                        last_error = e
+                        err_str = str(e)
+                        if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                            # Rate limited - wait and retry, then try next model
+                            wait_time = (attempt + 1) * 3  # 3s, 6s, 9s
+                            print(f"[AI] Gemini rate limited on {model_name} (attempt {attempt+1}/3). Waiting {wait_time}s...")
+                            time.sleep(wait_time)
+                            continue
+                        elif "404" in err_str or "NOT_FOUND" in err_str:
+                            # Model not available, skip to next model immediately
+                            print(f"[AI] Model {model_name} not found, trying next...")
+                            break
+                        else:
+                            # Other error, raise immediately
+                            raise
+                else:
+                    # All retries exhausted for this model, try next
+                    print(f"[AI] All retries exhausted for {model_name}, trying next model...")
+                    continue
+            
+            # If we get here, all models and retries failed
+            raise Exception(f"All Gemini models exhausted. Last error: {last_error}")
             
         elif provider == "ollama":
             url = os.getenv("OLLAMA_URL", "http://localhost:11434")
-            model_name = os.getenv("OLLAMA_MODEL", "llama3.2")
+            model_name = model_override or os.getenv("OLLAMA_MODEL", "llama3.2")
             
             payload = {
                 "model": model_name,
@@ -134,7 +193,7 @@ class LLMProvider:
                 
             from openai import OpenAI
             client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com/v1")
-            model_name = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+            model_name = model_override or os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
             
             try:
                 response = client.chat.completions.create(
@@ -155,7 +214,7 @@ class LLMProvider:
                 
             from openai import OpenAI
             client = OpenAI(api_key=api_key)
-            model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+            model_name = model_override or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
             
             try:
                 response = client.chat.completions.create(
