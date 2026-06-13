@@ -5,9 +5,10 @@ import {
   Send, MessageSquare, Bot, Sparkles, User, Volume1
 } from 'lucide-react';
 
-// Get backend API URL from environment variable, window override, or same-origin fallback
+// Get backend API URL from environment variable, window override, or local-dev fallback
 const rawBackend = import.meta.env.VITE_BACKEND_URL;
-const API_URL = rawBackend || window?.__BACKEND_URL || window.location.origin || 'http://localhost:8000';
+const defaultBackend = window?.__BACKEND_URL || (import.meta.env.DEV ? 'http://localhost:8000' : window.location.origin);
+const API_URL = rawBackend || defaultBackend;
 console.info('Using backend API_URL:', API_URL);
 
 export default function Dashboard({ session, supabase, isSandboxMode, onSignOut }) {
