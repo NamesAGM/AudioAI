@@ -21,7 +21,7 @@ from services.llm_provider import LLMProvider
 # Load configuration from the local backend directory explicitly
 from pathlib import Path
 dotenv_path = Path(__file__).resolve().parent / ".env"
-load_dotenv(dotenv_path=dotenv_path)
+load_dotenv(dotenv_path=dotenv_path, override=True)
 
 app = FastAPI(title="AudioAI API", description="PDF to Audio conversion backend server")
 
@@ -247,6 +247,7 @@ async def process_conversion_task(job_id: str, local_pdf_path: str, filename: st
     update_job_status(job_id, "processing")
     
     local_audio_path = os.path.join(AUDIO_DIR, f"{job_id}.mp3")
+    uploaded_to_supabase = False
     
     # Check if required services are available
     if not pdf_service or not tts_service:
@@ -361,10 +362,42 @@ async def startup_event():
         print(f"    - Google TTS: {'[OK]' if tts_service.google_available else '[FAIL]'}")
     print(f"[DATABASE] Database:")
     print(f"  - Supabase: {'[OK]' if supabase else '[FAIL]'}")
+    if supabase:
+        try:
+            buckets = supabase.storage.list_buckets()
+            existing_buckets = []
+            for b in buckets:
+                if hasattr(b, 'name'):
+                    existing_buckets.append(b.name)
+                elif isinstance(b, dict) and 'name' in b:
+                    existing_buckets.append(b['name'])
+            
+            for bucket_name in ["pdfs", "audio"]:
+                if bucket_name not in existing_buckets:
+                    print(f"Creating missing public Supabase bucket '{bucket_name}'...")
+                    supabase.storage.create_bucket(bucket_name, options={"public": True})
+                    print(f"Supabase bucket '{bucket_name}' created.")
+                else:
+                    print(f"Supabase bucket '{bucket_name}' already exists.")
+        except Exception as bucket_err:
+            print(f"Failed to verify/create Supabase storage buckets: {bucket_err}")
     print(f"  - Sandbox DB: {DB_PATH}")
     print(f"[STORAGE] Storage:")
     print(f"  - Uploads: {UPLOAD_DIR} ({'[OK]' if os.path.exists(UPLOAD_DIR) else '[FAIL]'})")
     print(f"  - Audio: {AUDIO_DIR} ({'[OK]' if os.path.exists(AUDIO_DIR) else '[FAIL]'})")
+    # AI Provider status
+    try:
+        ai_provider = LLMProvider.get_active_provider()
+        ai_status = LLMProvider.check_status()
+        print(f"[AI] AI Provider:")
+        print(f"  - Active Provider: {ai_provider.upper()}")
+        print(f"  - Status: {ai_status.get('status', 'unknown')}")
+        print(f"  - Model: {ai_status.get('model', 'N/A')}")
+        print(f"  - GEMINI_API_KEY set: {'YES' if os.getenv('GEMINI_API_KEY') else 'NO'}")
+        print(f"  - AI_PROVIDER env: '{os.getenv('AI_PROVIDER', '(not set)')}'")
+        print(f"  - .env loaded from: {dotenv_path} ({'EXISTS' if dotenv_path.exists() else 'MISSING'})")
+    except Exception as e:
+        print(f"[AI] AI Provider: ERROR - {e}")
     print("="*60 + "\n")
 
 @app.get("/api/health")
@@ -393,7 +426,7 @@ async def convert_pdf(
 ):
     try:
         # Validate file format
-        if not file.filename.endswith(".pdf"):
+        if not file.filename.lower().endswith(".pdf"):
             raise HTTPException(status_code=400, detail="Only PDF files are supported")
             
         job_id = str(uuid.uuid4())

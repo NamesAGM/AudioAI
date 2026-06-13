@@ -35,14 +35,9 @@ class LLMProvider:
             if not api_key:
                 return {"status": "error", "provider": "gemini", "message": "GEMINI_API_KEY is not set"}
             try:
-                import google.generativeai as genai
-                genai.configure(api_key=api_key)
-                # Test call with a very short prompt
-                model_name = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
-                model = genai.GenerativeModel(model_name)
-                # Since we want to make sure it's working but not waste time/rate limit, 
-                # we just check if the client can be configured. 
-                # (Actual test call is omitted to keep it fast, but client configuration is checked)
+                from google import genai
+                client = genai.Client(api_key=api_key)
+                model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
                 return {"status": "connected", "provider": "gemini", "model": model_name}
             except Exception as e:
                 return {"status": "error", "provider": "gemini", "message": str(e)}
@@ -100,13 +95,15 @@ class LLMProvider:
             if not api_key:
                 raise ValueError("GEMINI_API_KEY is not configured in environment variables.")
                 
-            import google.generativeai as genai
-            genai.configure(api_key=api_key)
-            model_name = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
-            model = genai.GenerativeModel(model_name)
+            from google import genai
+            client = genai.Client(api_key=api_key)
+            model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
             
             # Call Gemini API
-            response = model.generate_content(prompt)
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt
+            )
             if not response.text:
                 raise Exception("Empty response received from Gemini API.")
             return response.text

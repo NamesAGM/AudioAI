@@ -65,34 +65,15 @@ class TTSService:
                 temp_files = [] # clear so we don't try to delete it
             else:
                 # Merge multiple audio files
-                if PYDUB_AVAILABLE:
-                    # Use pydub to merge
-                    combined = AudioSegment.empty()
-                    for path in temp_files:
-                        segment = AudioSegment.from_mp3(path)
-                        combined += segment
-                    combined.export(output_file_path, format="mp3")
-                else:
-                    # Use ffmpeg to concatenate files
-                    concat_list = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
-                    try:
-                        # Create ffmpeg concat file
+                # MP3 files are frame-based and can be safely concatenated by joining their raw bytes.
+                # This makes us 100% independent of external ffmpeg binary or pydub library.
+                try:
+                    with open(output_file_path, "wb") as outfile:
                         for path in temp_files:
-                            concat_list.write(f"file '{path}'\n")
-                        concat_list.close()
-                        
-                        # Run ffmpeg to concatenate
-                        cmd = [
-                            'ffmpeg', '-f', 'concat', '-safe', '0',
-                            '-i', concat_list.name,
-                            '-c', 'copy', output_file_path, '-y'
-                        ]
-                        result = subprocess.run(cmd, capture_output=True, text=True)
-                        if result.returncode != 0:
-                            print(f"FFmpeg error: {result.stderr}")
-                            raise Exception(f"FFmpeg concat failed: {result.stderr}")
-                    finally:
-                        os.remove(concat_list.name)
+                            with open(path, "rb") as infile:
+                                outfile.write(infile.read())
+                except Exception as concat_err:
+                    raise Exception(f"Failed to concatenate MP3 chunks: {concat_err}")
                 
             return True
             

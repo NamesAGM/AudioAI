@@ -13,13 +13,13 @@ function generateUUID() {
 }
 
 // Attempt to initialize Supabase
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || import.meta.env.SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.SUPABASE_ANON_KEY || import.meta.env.SUPABASE_SERVICE_ROLE_KEY;
 
 let supabase = null;
 let isSandboxMode = true;
 
-if (supabaseUrl && supabaseAnonKey && supabaseUrl !== 'your-supabase-url') {
+if (supabaseUrl && supabaseAnonKey && supabaseUrl !== 'your-supabase-url' && supabaseUrl !== 'your_live_supabase_url') {
   try {
     supabase = createClient(supabaseUrl, supabaseAnonKey);
     isSandboxMode = false;
